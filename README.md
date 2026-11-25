@@ -1,8 +1,14 @@
-# Izena DNS connector
+# Izena Cloudflare connector
 
-A WASI connector with a sample zone and an HTTP health probe. To adapt it,
-update the module path in `go.mod` and the command import, rename the command
-under `cmd/`, and implement your provider and tests under `internal/`.
+A WASI connector for Cloudflare DNS. It manages zones, individual DNS records,
+and DNSSEC. Eligible A, AAAA, and CNAME records support Cloudflare proxying.
+
+Use a Cloudflare account ID and an API token scoped to the zones you want to
+manage. Grant Zone Read and DNS Read for inspection, DNS Write for record and
+DNSSEC changes, and Zone Write for zone changes. Before changing a zone's
+setup type, prepare the DNS migration described by Cloudflare for
+[Full to Partial](https://developers.cloudflare.com/dns/zone-setups/conversions/convert-full-to-partial/)
+or [Partial to Full](https://developers.cloudflare.com/dns/zone-setups/conversions/convert-partial-to-full/).
 
 ## Development
 
@@ -17,6 +23,4 @@ make build
 
 ## License
 
-[Apache License 2.0](LICENSE-TEMPLATE) applies to the template. You can choose
-a license for your own changes while retaining the template's license and
-notices when distributing its code.
+[Apache License 2.0](LICENSE)

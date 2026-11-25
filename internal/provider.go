@@ -1,9 +1,8 @@
-// Package internal implements the provider contract and upstream operations.
+// Package internal implements the Cloudflare connector and its upstream operations.
 package internal
 
 import (
 	"context"
-	"net/url"
 	"strings"
 
 	"github.com/izenadns/izena-connector-contract/abi"
@@ -11,27 +10,32 @@ import (
 )
 
 const (
-	providerID       = "example-dns"
-	providerName     = "Example DNS"
+	providerID       = "cloudflare"
+	providerName     = "Cloudflare"
 	baseURLKey       = "endpoint"
+	baseURL          = "https://api.cloudflare.com/client/v4"
+	accountIDKey     = "account_id"
 	credentialKey    = "token"
-	maxBaseURLLength = 2048
+	cloudflareIDSize = 32
 )
 
-// Exchange delegates a request to Izena's connection-scoped HTTP host.
-type Exchange func(context.Context, abi.HTTPRequest) (abi.HTTPResponse, error)
-
+// Provider adapts the Cloudflare HTTP client to Izena's connector contract.
 type Provider struct {
-	HTTP Exchange
+	exchange Exchange
+}
+
+func NewProvider(exchange Exchange) *Provider {
+	return &Provider{exchange: exchange}
 }
 
 func (*Provider) Describe() connector.Description {
 	return connector.Description{
-		ID: providerID, Name: providerName,
+		ID:   providerID,
+		Name: providerName,
 		ConnectionFields: []connector.ConnectionField{
-			{Key: baseURLKey, Label: "API base URL", URL: true, Required: true, MaxLength: maxBaseURLLength,
-				Placeholder: "https://dns.example.test"},
-			{Key: credentialKey, Label: "Bearer token", Secret: true, Editable: true, MaxLength: 4096},
+			{Key: baseURLKey, Label: "API base URL", Default: baseURL, URL: true, MaxLength: len(baseURL)},
+			{Key: accountIDKey, Label: "Account ID", Required: true, MaxLength: cloudflareIDSize},
+			{Key: credentialKey, Label: "API token", Secret: true, Required: true, Editable: true, MaxLength: 4096},
 		},
 	}
 }
@@ -47,33 +51,63 @@ func (p *Provider) Manifest() abi.Manifest {
 }
 
 func (*Provider) PrepareSettings(_ context.Context, settings map[string]string) (connector.PreparedSettings, error) {
-	endpoint, err := url.Parse(strings.TrimSpace(settings[baseURLKey]))
-	if err != nil || endpoint == nil || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Opaque != "" ||
-		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
-		endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" {
-		return connector.PreparedSettings{}, connector.ErrInvalidServerURL
+	normalized, err := normalizeSettings(settings)
+	if err != nil {
+		return connector.PreparedSettings{}, err
 	}
-	baseURL := strings.TrimRight(endpoint.String(), "/")
-	normalized := map[string]string{baseURLKey: baseURL}
-	return connector.PreparedSettings{Settings: normalized, TargetKey: normalized[baseURLKey]}, nil
+	return connector.PreparedSettings{Settings: normalized, TargetKey: normalized[accountIDKey]}, nil
+}
+
+// GuestClient scopes API requests before invoking the host transport.
+func GuestClient(settings map[string]string, allowed func(abi.HTTPRequest) bool, exchange Exchange) (*Client, error) {
+	if exchange == nil {
+		return nil, connector.ErrUnavailable
+	}
+	if settings[baseURLKey] != baseURL {
+		return nil, connector.ErrInvalidServerURL
+	}
+	accountID := settings[accountIDKey]
+	if !validID(accountID) {
+		return nil, &connector.Error{Kind: connector.ErrInvalidServer, Code: "invalid_account_id"}
+	}
+	return &Client{accountID: accountID, exchange: func(ctx context.Context, request abi.HTTPRequest) (abi.HTTPResponse, error) {
+		if allowed != nil && !allowed(request) {
+			return abi.HTTPResponse{}, connector.ErrValidation
+		}
+		return exchange(ctx, request)
+	}}, nil
+}
+
+func normalizeSettings(settings map[string]string) (map[string]string, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(settings[baseURLKey]), "/")
+	if endpoint != "" && endpoint != baseURL {
+		return nil, connector.ErrInvalidServerURL
+	}
+	accountID := strings.ToLower(strings.TrimSpace(settings[accountIDKey]))
+	if !validID(accountID) {
+		return nil, &connector.Error{Kind: connector.ErrInvalidServer, Code: "invalid_account_id"}
+	}
+	return map[string]string{baseURLKey: baseURL, accountIDKey: accountID}, nil
 }
 
 func (p *Provider) Connect(config connector.ConnectionConfig) (connector.Client, error) {
-	client, err := p.connect(config.Settings)
+	client, err := GuestClient(config.Settings, nil, p.exchange)
 	if err != nil {
 		return nil, err
 	}
 	return client, nil
 }
 
-func (p *Provider) connect(settings map[string]string) (*Client, error) {
-	if p.HTTP == nil {
-		return nil, connector.ErrUnavailable
+func validID(id string) bool {
+	if len(id) != cloudflareIDSize {
+		return false
 	}
-	if settings[baseURLKey] == "" {
-		return nil, connector.ErrInvalidServerURL
+	for _, char := range id {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return false
+		}
 	}
-	return &Client{exchange: p.HTTP}, nil
+	return true
 }
 
 var _ connector.Provider = (*Provider)(nil)

@@ -2,34 +2,23 @@ package internal
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"net/url"
 
-	"github.com/izenadns/izena-connector-contract/abi"
 	"github.com/izenadns/izena-connector-contract/connector"
 )
 
-// Probe demonstrates a bounded upstream request without reading any credentials.
+// Probe verifies access to the configured account's zone inventory.
 func (c *Client) Probe(ctx context.Context) (connector.Profile, error) {
-	response, err := c.exchange(ctx, abi.HTTPRequest{
-		Method: http.MethodGet, Parts: []string{"health"},
-		Headers: http.Header{"Accept": {"application/json"}}, Limit: 4096,
-	})
-	if err != nil {
+	var zones []zoneWire
+	query := url.Values{"account.id": {c.accountID}, "per_page": {"5"}}
+	if _, err := c.request(ctx, http.MethodGet, []string{"zones"}, query, nil, &zones); err != nil {
 		return connector.Profile{}, err
 	}
-	switch response.Status {
-	case http.StatusOK:
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return connector.Profile{}, connector.ErrAuthentication
-	default:
-		return connector.Profile{}, connector.ErrUnavailable
+	for _, zone := range zones {
+		if zone.Account.ID != c.accountID {
+			return connector.Profile{}, connector.ErrMalformed
+		}
 	}
-	var health struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(response.Body, &health); err != nil || health.Version == "" {
-		return connector.Profile{}, connector.ErrMalformed
-	}
-	return connector.Profile{DaemonType: providerName, Version: health.Version}, nil
+	return connector.Profile{DaemonType: providerName, Version: "v4"}, nil
 }

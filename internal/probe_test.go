@@ -2,33 +2,24 @@ package internal
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/izenadns/izena-connector-contract/abi"
 	"github.com/izenadns/izena-connector-contract/connector"
 )
 
-func TestProbeClassifiesUpstreamResponses(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		status int
-		body   string
-		want   error
-	}{
-		{"authentication", http.StatusUnauthorized, "", connector.ErrAuthentication},
-		{"upstream unavailable", http.StatusServiceUnavailable, "", connector.ErrUnavailable},
-		{"malformed response", http.StatusOK, "{", connector.ErrMalformed},
-		{"missing version", http.StatusOK, "{}", connector.ErrMalformed},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			client := Client{exchange: func(context.Context, abi.HTTPRequest) (abi.HTTPResponse, error) {
-				return abi.HTTPResponse{Status: test.status, Body: []byte(test.body)}, nil
-			}}
-			if _, err := client.Probe(t.Context()); !errors.Is(err, test.want) {
-				t.Fatalf("Probe() = %v, want %v", err, test.want)
-			}
-		})
+func TestProbeChecksTheCloudflareZoneInventory(t *testing.T) {
+	client := Client{accountID: fixtureAccountID, exchange: func(_ context.Context, request abi.HTTPRequest) (abi.HTTPResponse, error) {
+		if request.Method != http.MethodGet || !slices.Equal(request.Parts, []string{"zones"}) ||
+			request.Query.Get("account.id") != fixtureAccountID || request.Query.Get("per_page") != "5" {
+			t.Fatalf("unexpected probe request: %+v", request)
+		}
+		return abi.HTTPResponse{Status: http.StatusOK, Body: []byte(`{"success":true,"result":[]}`)}, nil
+	}}
+	want := connector.Profile{DaemonType: providerName, Version: "v4"}
+	if got, err := client.Probe(t.Context()); got != want || err != nil {
+		t.Fatalf("Probe() = %+v, %v, want %+v", got, err, want)
 	}
 }

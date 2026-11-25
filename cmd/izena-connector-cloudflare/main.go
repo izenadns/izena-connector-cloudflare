@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"unsafe"
 
+	"github.com/izenadns/izena-connector-cloudflare/internal"
 	"github.com/izenadns/izena-connector-contract/abi"
 	"github.com/izenadns/izena-connector-contract/connector"
-	"github.com/izenadns/izena-connector-template/internal"
 )
 
 //go:wasmimport izena_connector_v1 read_input
@@ -42,9 +42,9 @@ func run(size uint32) uint32 {
 		return 0
 	}
 	// Host imports enforce the calling request's context and deadline.
-	value, err := internal.Dispatch(context.Background(), internal.Provider{HTTP: exchange}, request)
+	value, err := internal.Dispatch(context.Background(), request, exchange)
 	result := abi.Result{Error: abi.EncodeFailure(err)}
-	if value != nil {
+	if value != nil && (err == nil || request.Operation == abi.UpdateZone) {
 		result.Value, err = abi.Marshal(value)
 		if err != nil {
 			return 0

@@ -8,16 +8,18 @@ import (
 	"github.com/izenadns/izena-connector-contract/connector"
 )
 
-// Dispatch maps each v1 operation to the corresponding provider method.
-func Dispatch(ctx context.Context, provider Provider, req abi.Request) (any, error) {
+// Dispatch maps ABI operations to Cloudflare calls scoped to the requested resource.
+func Dispatch(ctx context.Context, req abi.Request, exchange Exchange) (any, error) {
+	var provider Provider
 	switch req.Operation {
 	case abi.Describe:
 		return provider.Manifest(), nil
 	case abi.PrepareSettings:
 		return provider.PrepareSettings(ctx, req.Settings)
 	}
-	provider.HTTP = scopeHTTP(req.Operation, provider.HTTP)
-	client, err := provider.connect(req.Settings)
+	client, err := GuestClient(req.Settings, func(request abi.HTTPRequest) bool {
+		return allowedRequest(req, request)
+	}, exchange)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +32,11 @@ func Dispatch(ctx context.Context, provider Provider, req abi.Request) (any, err
 	case abi.ListZones:
 		return client.ListZones(ctx)
 	case abi.ListZonesPage:
-		return nil, connector.ErrUnsupported
+		var input connector.PageInput
+		if err := json.Unmarshal(req.Input, &input); err != nil {
+			return nil, connector.ErrValidation
+		}
+		return client.ListZonesPage(ctx, input)
 	case abi.GetZone:
 		return client.GetZone(ctx, req.ZoneID)
 	case abi.GetZoneMetadata:
@@ -77,7 +83,11 @@ func Dispatch(ctx context.Context, provider Provider, req abi.Request) (any, err
 	case abi.ListRecords:
 		return client.ListRecords(ctx, req.ZoneID)
 	case abi.ListRecordsPage:
-		return nil, connector.ErrUnsupported
+		var input connector.PageInput
+		if err := json.Unmarshal(req.Input, &input); err != nil {
+			return nil, connector.ErrValidation
+		}
+		return client.ListRecordsPage(ctx, req.ZoneID, input)
 	case abi.GetRecord:
 		return client.GetRecord(ctx, req.ZoneID, req.RecordID)
 	case abi.CreateRecord:
@@ -101,11 +111,11 @@ func Dispatch(ctx context.Context, provider Provider, req abi.Request) (any, err
 	case abi.GetDNSSEC:
 		return client.GetDNSSEC(ctx, req.ZoneID)
 	case abi.SetDNSSEC:
-		var enabled bool
-		if err := json.Unmarshal(req.Input, &enabled); err != nil {
+		var enabled *bool
+		if err := json.Unmarshal(req.Input, &enabled); err != nil || enabled == nil {
 			return nil, connector.ErrValidation
 		}
-		return nil, client.SetDNSSEC(ctx, req.ZoneID, enabled)
+		return nil, client.SetDNSSEC(ctx, req.ZoneID, *enabled)
 
 	case abi.RectifyZone:
 		return nil, client.RectifyZone(ctx, req.ZoneID)

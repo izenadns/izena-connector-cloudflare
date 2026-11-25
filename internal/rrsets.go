@@ -6,24 +6,20 @@ import (
 	"github.com/izenadns/izena-connector-contract/connector"
 )
 
+// This connector operates on individual records. RRset operations have no
+// upstream HTTP routes and report the unsupported capability.
+func (c *Client) ListRRsetsPage(ctx context.Context, zoneID string, input connector.PageInput) (connector.Page[connector.RRset], error) {
+	return connector.Page[connector.RRset]{}, connector.ErrUnsupported
+}
+
 func (c *Client) GetRRset(ctx context.Context, zoneID, name, rrType string) (connector.RRset, error) {
-	record := rrset()
-	if zoneID != exampleZoneID || name != record.Name || rrType != record.Type {
-		return connector.RRset{}, connector.ErrNotFound
-	}
-	return record, nil
+	return connector.RRset{}, connector.ErrUnsupported
 }
 
 func (c *Client) ReplaceRRset(ctx context.Context, zoneID string, input connector.RRsetReplaceInput) error {
 	return connector.ErrUnsupported
 }
+
 func (c *Client) DeleteRRset(ctx context.Context, zoneID, name, rrType string) error {
 	return connector.ErrUnsupported
-}
-
-func rrset() connector.RRset {
-	return connector.RRset{
-		Name: "www." + exampleZone, Type: "A", TTL: 300,
-		Records: []connector.Record{{Content: "192.0.2.1"}},
-	}
 }

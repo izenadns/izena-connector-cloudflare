@@ -1,38 +1,40 @@
 package internal
 
 import (
-	"context"
-	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/izenadns/izena-connector-contract/abi"
-	"github.com/izenadns/izena-connector-contract/connector"
 )
 
-func TestHTTPPolicyOnlyAllowsTheProbeRoute(t *testing.T) {
-	calls := 0
-	host := func(context.Context, abi.HTTPRequest) (abi.HTTPResponse, error) {
-		calls++
-		return abi.HTTPResponse{Status: http.StatusOK}, nil
-	}
-	probe := abi.HTTPRequest{Method: http.MethodGet, Parts: []string{"health"}}
-	if _, err := scopeHTTP(abi.Probe, host)(t.Context(), probe); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		operation abi.Operation
-		request   abi.HTTPRequest
+func TestHTTPPolicyBindsRequestsToOperationAndZone(t *testing.T) {
+	tests := []struct {
+		name   string
+		op     abi.Operation
+		method string
+		parts  []string
+		query  url.Values
+		want   bool
 	}{
-		{abi.ListZones, probe},
-		{abi.Probe, abi.HTTPRequest{Method: http.MethodPost, Parts: []string{"health"}}},
-		{abi.Probe, abi.HTTPRequest{Method: http.MethodGet, Parts: []string{"health", "detail"}}},
-	} {
-		if _, err := scopeHTTP(test.operation, host)(t.Context(), test.request); !errors.Is(err, connector.ErrValidation) {
-			t.Fatalf("unexpected scope result for %s: %v", test.operation, err)
-		}
+		{"account inventory", abi.Probe, http.MethodGet, []string{"zones"}, url.Values{"account.id": {fixtureAccountID}}, true},
+		{"unfiltered inventory", abi.Probe, http.MethodGet, []string{"zones"}, nil, false},
+		{"zone account check", abi.CreateRecord, http.MethodGet, []string{"zones", fixtureZoneID}, nil, true},
+		{"create record", abi.CreateRecord, http.MethodPost, []string{"zones", fixtureZoneID, "dns_records"}, nil, true},
+		{"update record", abi.UpdateRecord, http.MethodPatch, []string{"zones", fixtureZoneID, "dns_records", fixtureRecordID}, nil, true},
+		{"wrong zone", abi.UpdateRecord, http.MethodPatch, []string{"zones", fixtureAccountID, "dns_records", fixtureRecordID}, nil, false},
+		{"wrong record", abi.UpdateRecord, http.MethodPatch, []string{"zones", fixtureZoneID, "dns_records", fixtureAccountID}, nil, false},
+		{"write during read", abi.GetRecord, http.MethodPatch, []string{"zones", fixtureZoneID, "dns_records", fixtureRecordID}, nil, false},
+		{"DNSSEC write", abi.SetDNSSEC, http.MethodPatch, []string{"zones", fixtureZoneID, "dnssec"}, nil, true},
+		{"zone write during DNSSEC", abi.SetDNSSEC, http.MethodPatch, []string{"zones", fixtureZoneID}, nil, false},
 	}
-	if calls != 1 {
-		t.Fatalf("host calls = %d, want one permitted call", calls)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := abi.Request{Operation: test.op, ZoneID: fixtureZoneID, RecordID: fixtureRecordID, Settings: fixtureSettings()}
+			request := abi.HTTPRequest{Method: test.method, Parts: test.parts, Query: test.query}
+			if allowedRequest(call, request) != test.want {
+				t.Fatalf("allowedRequest() = %t, want %t", !test.want, test.want)
+			}
+		})
 	}
 }
